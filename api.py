@@ -72,8 +72,10 @@ def home():
     return {
         "message": "Welcome to the AI Product Scraper API 🚀",
         "endpoints": {
-            "/compare-two": "Compare two URLs"
+            "/compare-two": "Compare two URLs",
+            "/scrape_urls": "Scrape Urls"
         }
     }
+
 
 
