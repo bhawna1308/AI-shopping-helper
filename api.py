@@ -21,34 +21,6 @@ app.add_middleware(
 
 PIPELINE_CONFIG = create_config()
 
-@app.post("/scrape-urls")
-def scrape_urls(body: Dict[str, Any]):
-    """Body: { "urls": ["https://...","https://..."], "compare_all": true }"""
-    try:
-        urls = body.get("urls", [])
-        compare_all = body.get("compare_all", False)
-        if not urls or not isinstance(urls, list):
-            raise HTTPException(status_code=400, detail="Provide a list of URLs in 'urls'.")
-        products = process_urls(PIPELINE_CONFIG, urls, output_file="api_products.json", compare_all=False)
-        comparisons = []
-        if compare_all and len(products) >= 2:
-            for i in range(len(products) - 1):
-                for j in range(i + 1, len(products)):
-                    comp_text = compare_products(products[i], products[j])
-                    comparisons.append({
-                        "pair": [products[i].get("title"), products[j].get("title")],
-                        "comparison": comp_text
-                    })
-        return {
-            "status": "success",
-            "products": products,
-            "comparisons": comparisons
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("scrape_urls failed")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/compare-two")
 def compare_two_endpoint(body: Dict[str, Any]):
@@ -75,3 +47,4 @@ def home():
             "/compare-two": "Compare two URLs"
         }
     }
+
