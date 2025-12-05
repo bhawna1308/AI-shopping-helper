@@ -67,7 +67,7 @@ if submit and not st.session_state.processed:
         payload = {"urls": urls, "compare_all": True}
         try:
             with st.spinner("Sending URLs to API and processing — this can take a while..."):
-                resp = requests.post(f"{API_URL}/scrape-urls", json=payload, timeout=180)
+                resp = requests.post(f"{API_URL}/scrape_urls", json=payload, timeout=180)
                 resp.raise_for_status()
                 data = resp.json()
             if data.get("status") == "success":
@@ -156,4 +156,5 @@ else:
 
 st.write("---")
 st.caption("Built with ❤️ using Streamlit + FastAPI + AI product extraction")
+
 
