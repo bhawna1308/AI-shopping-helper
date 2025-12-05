@@ -12,7 +12,7 @@ from main import create_config  # only if needed; not strictly necessary
 
 load_dotenv()
 # API_URL = os.getenv("API_URL", "http://localhost:8000")
-API_URL = "https://ai-product-api.onrender.com"
+API_URL = "https://ai-shopping-helper.onrender.com"
 
 
 
@@ -156,6 +156,7 @@ else:
 
 st.write("---")
 st.caption("Built with ❤️ using Streamlit + FastAPI + AI product extraction")
+
 
 
 
