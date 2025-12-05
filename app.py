@@ -6,6 +6,12 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from dotenv import load_dotenv
+from streamlit_autorefresh import st_autorefresh
+
+st.set_page_config(page_title="AI Shopping Helper", layout="wide")
+
+# 🔄 Prevent Streamlit session sleep (auto-refresh every 90 seconds)
+st_autorefresh(interval=90000, key="keepalive")
 
 # Import functions from main (functional style)
 from main import create_config  # only if needed; not strictly necessary
@@ -156,6 +162,7 @@ else:
 
 st.write("---")
 st.caption("Built with ❤️ using Streamlit + FastAPI + AI product extraction")
+
 
 
 
