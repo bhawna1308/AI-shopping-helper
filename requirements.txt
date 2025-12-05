@@ -9,4 +9,5 @@ streamlit
 pandas
 python-dotenv
 langchain-groq
+streamlit_autorefresh
 
