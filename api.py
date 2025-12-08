@@ -11,7 +11,7 @@ from pathlib import Path
 import json
 import uuid
 
-from main1 import (
+from main import (
     create_config, 
     process_urls, 
     process_url, 
@@ -641,3 +641,4 @@ if __name__ == "__main__":
         reload=True,
         log_level="info"
     )
+
