@@ -10,4 +10,7 @@ pandas
 python-dotenv
 langchain-groq
 streamlit_autorefresh
+plotly
+webdriver-manager
+selenium
 
