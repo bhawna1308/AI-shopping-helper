@@ -16,7 +16,7 @@ from typing import List, Dict, Optional
 # ====================================
 load_dotenv()
 #API_URL = os.getenv("API_URL", "http://localhost:8000")
-API_URL = "https://ai-shopping-helper.onrender.com"
+API_URL = "https://ai-shopping-helper-1.onrender.com"
 
 st.set_page_config(
     page_title="🛒 AI Shopping Assistant",
@@ -590,3 +590,4 @@ def main():
 # ====================================
 if __name__ == "__main__":
     main()
+
