@@ -1,4 +1,3 @@
-# main.py
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -10,7 +9,16 @@ from urllib.robotparser import RobotFileParser
 from typing import Optional, Dict, List, Tuple
 from textwrap import shorten
 from pathlib import Path
-# import ollama
+
+# Selenium imports
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+from webdriver_manager.chrome import ChromeDriverManager
 
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
@@ -24,16 +32,15 @@ groq_model = ChatGroq(
     api_key=GROQ_KEY,
 )
 
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ----------------------------
-# Configuration (simple dict)
+# Configuration
 # ----------------------------
 def create_config():
     return {
-        "USER_AGENT": "MyScraperBot/1.0",
+        "USER_AGENT": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "REQUEST_DELAY": 2,
         "REQUEST_TIMEOUT": 15,
         "MAX_TEXT_LENGTH": 12000,
@@ -44,8 +51,77 @@ def create_config():
         "GBP_TO_INR": 104.5,
         "EUR_TO_INR": 102.0,
         "PRICE_PATTERN": r"(₹\s?\d[\d,]*(?:\.\d+)?|\$\s?\d[\d,]*(?:\.\d+)?|€\s?\d[\d,]*(?:\.\d+)?|£\s?\d[\d,]*(?:\.\d+)?)",
-        "RATING_PATTERN": r"(\b\d(?:\.\d)?\s?(?:\/\s?5|stars?)\b|\b\d(?:\.\d)?(?=\s?\/\s?5))"
+        "RATING_PATTERN": r"(\b\d(?:\.\d)?\s?(?:\/\s?5|stars?)\b|\b\d(?:\.\d)?(?=\s?\/\s?5))",
+        "USE_SELENIUM": True,  # Toggle between Selenium and requests
+        "SELENIUM_WAIT_TIME": 10,  # Seconds to wait for elements
+        "HEADLESS": True  # Run browser in headless mode
     }
+
+# ----------------------------
+# Selenium Driver Management
+# ----------------------------
+_driver: Optional[webdriver.Chrome] = None
+
+def get_selenium_driver(config):
+    """Initialize and return a Selenium WebDriver instance"""
+    global _driver
+    
+    if _driver is not None:
+        return _driver
+    
+    try:
+        chrome_options = Options()
+        
+        if config["HEADLESS"]:
+            chrome_options.add_argument("--headless=new")
+        
+        # Essential options for stability
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument(f"user-agent={config['USER_AGENT']}")
+        chrome_options.add_argument("--window-size=1920,1080")
+        
+        # Disable images and CSS for faster loading (optional)
+        prefs = {
+            "profile.managed_default_content_settings.images": 2,
+            "profile.default_content_setting_values.notifications": 2,
+        }
+        chrome_options.add_experimental_option("prefs", prefs)
+        
+        # Exclude automation flags
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        # Initialize driver
+        service = Service(ChromeDriverManager().install())
+        _driver = webdriver.Chrome(service=service, options=chrome_options)
+        
+        # Remove webdriver flag
+        _driver.execute_cdp_cmd('Network.setUserAgentOverride', {
+            "userAgent": config['USER_AGENT']
+        })
+        _driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        logger.info("Selenium WebDriver initialized successfully")
+        return _driver
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize Selenium driver: {e}")
+        return None
+
+def close_selenium_driver():
+    """Close and cleanup Selenium driver"""
+    global _driver
+    if _driver:
+        try:
+            _driver.quit()
+            logger.info("Selenium driver closed")
+        except Exception as e:
+            logger.error(f"Error closing driver: {e}")
+        finally:
+            _driver = None
 
 # ----------------------------
 # Robots check (cached)
@@ -79,7 +155,54 @@ def is_allowed_by_robots(url: str, user_agent: str) -> bool:
         return False
 
 # ----------------------------
-# Fetch & extract
+# Fetch HTML with Selenium
+# ----------------------------
+def fetch_html_selenium(config, url: str) -> Optional[str]:
+    """Fetch HTML using Selenium for JavaScript-rendered content"""
+    try:
+        driver = get_selenium_driver(config)
+        if not driver:
+            logger.error("Could not initialize Selenium driver")
+            return None
+        
+        logger.info(f"Loading page with Selenium: {url}")
+        driver.get(url)
+        
+        # Wait for page to load (adjust selector based on target site)
+        wait = WebDriverWait(driver, config["SELENIUM_WAIT_TIME"])
+        
+        # Wait for body to be present
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        
+        # Additional wait for dynamic content (if needed)
+        time.sleep(2)
+        
+        # Scroll to load lazy-loaded content
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+        time.sleep(1)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(1)
+        
+        # Get page source
+        html = driver.page_source
+        
+        time.sleep(config["REQUEST_DELAY"])
+        logger.info(f"Successfully fetched HTML with Selenium: {url}")
+        
+        return html
+        
+    except TimeoutException:
+        logger.error(f"Timeout waiting for page to load: {url}")
+        return None
+    except WebDriverException as e:
+        logger.error(f"WebDriver error for {url}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error fetching with Selenium: {url} -> {e}")
+        return None
+
+# ----------------------------
+# Fetch & extract (with fallback)
 # ----------------------------
 _session: Optional[requests.Session] = None
 
@@ -90,7 +213,8 @@ def _get_session(config):
         _session.headers.update({"User-Agent": config["USER_AGENT"]})
     return _session
 
-def fetch_html(config, url: str) -> Optional[str]:
+def fetch_html_requests(config, url: str) -> Optional[str]:
+    """Traditional requests-based fetching"""
     try:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
@@ -103,7 +227,7 @@ def fetch_html(config, url: str) -> Optional[str]:
         resp = sess.get(url, timeout=config["REQUEST_TIMEOUT"])
         resp.raise_for_status()
         time.sleep(config["REQUEST_DELAY"])
-        logger.info("Fetched HTML: %s", url)
+        logger.info("Fetched HTML with requests: %s", url)
         return resp.text
     except requests.exceptions.Timeout:
         logger.error("Timeout fetching: %s", url)
@@ -113,44 +237,94 @@ def fetch_html(config, url: str) -> Optional[str]:
         logger.error("Unexpected fetch error: %s -> %s", url, e)
     return None
 
+def fetch_html(config, url: str) -> Optional[str]:
+    """
+    Fetch HTML using Selenium (if enabled) or requests as fallback
+    """
+    if config.get("USE_SELENIUM", True):
+        html = fetch_html_selenium(config, url)
+        if html:
+            return html
+        logger.warning("Selenium fetch failed, falling back to requests")
+    
+    return fetch_html_requests(config, url)
+
+# ----------------------------
+# Enhanced extraction with Selenium-specific selectors
+# ----------------------------
 def extract_page_data(config, url: str) -> Tuple[Optional[Dict], Optional[str]]:
     try:
         html = fetch_html(config, url)
         if not html:
             return None, "Failed to fetch or blocked by robots.txt"
+        
         soup = BeautifulSoup(html, "html.parser")
+        
+        # Remove unwanted elements
         for tag in soup(["script", "style", "nav", "footer", "header", "noscript"]):
             tag.decompose()
+        
         extracted_text = soup.get_text(separator=" ", strip=True)
         if not extracted_text:
             return None, "No text extracted from page"
+        
+        # Extract prices with enhanced patterns
         prices = list(dict.fromkeys(re.findall(config["PRICE_PATTERN"], extracted_text)))
         price_candidates = prices[:]
-        price_tag = soup.find(lambda tag: tag.name in ("p", "span") and re.search(r'price|amount|cost', ' '.join(tag.get('class', [])), re.I))
-        if price_tag:
-            txt = price_tag.get_text(strip=True)
-            if txt and txt not in price_candidates:
-                price_candidates.insert(0, txt)
+        
+        # Look for common e-commerce price selectors
+        price_selectors = [
+            'span[class*="price"]',
+            'div[class*="price"]',
+            '[data-price]',
+            '.product-price',
+            '#price',
+            '[itemprop="price"]'
+        ]
+        
+        for selector in price_selectors:
+            price_elems = soup.select(selector)
+            for elem in price_elems[:3]:  # Check first 3 matches
+                txt = elem.get_text(strip=True)
+                if txt and txt not in price_candidates:
+                    price_candidates.insert(0, txt)
+        
+        # Extract ratings
         ratings = []
-        star_elems = soup.find_all(class_=re.compile(r'star[-_ ]?rating|star|rating', re.I))
-        rating_class_map = {'one': '1/5', 'two': '2/5', 'three': '3/5', 'four': '4/5', 'five': '5/5'}
-        for elem in star_elems:
-            classes = elem.get("class", []) or []
-            classes_text = " ".join(classes)
-            m = re.search(r'\b(one|two|three|four|five)\b', classes_text, re.I)
-            if m:
-                ratings.append(rating_class_map[m.group(1).lower()])
-                continue
-            txt = elem.get_text(" ", strip=True)
-            if txt:
-                ratings.append(txt)
+        rating_selectors = [
+            '[class*="rating"]',
+            '[class*="star"]',
+            '[data-rating]',
+            '[itemprop="ratingValue"]'
+        ]
+        
+        for selector in rating_selectors:
+            rating_elems = soup.select(selector)
+            for elem in rating_elems[:3]:
+                txt = elem.get_text(" ", strip=True)
+                if txt and txt not in ratings:
+                    ratings.append(txt)
+                
+                # Check for rating in attributes
+                for attr in ['data-rating', 'aria-label', 'title']:
+                    if elem.get(attr):
+                        attr_val = elem.get(attr)
+                        if attr_val not in ratings:
+                            ratings.append(attr_val)
+        
+        # Fallback to regex patterns
         if not ratings:
             textual_matches = list(dict.fromkeys(re.findall(config["RATING_PATTERN"], extracted_text)))
             ratings.extend(textual_matches)
+        
+        # Remove duplicates
         seen = set()
         ratings = [r for r in ratings if not (r in seen or seen.add(r))]
+        
+        # Extract description
         sentences = [s.strip() for s in re.split(r'[.!?\n]', extracted_text) if len(s.strip()) > 20]
         description = max(sentences, key=len, default="")[:config["DESCRIPTION_MAX_LENGTH"]]
+        
         logger.info("Extracted page data: %s", url)
         return {
             "text": extracted_text[:config["MAX_TEXT_LENGTH"]],
@@ -158,12 +332,13 @@ def extract_page_data(config, url: str) -> Tuple[Optional[Dict], Optional[str]]:
             "rating_candidates": ratings,
             "description_snippet": description.strip()
         }, None
+        
     except Exception as e:
         logger.exception("Error extracting page data from %s: %s", url, e)
         return None, f"Unexpected extraction error: {e}"
 
 # ----------------------------
-# Currency helpers (functions)
+# Currency helpers
 # ----------------------------
 def parse_amount(text: str) -> float:
     if not text:
@@ -228,7 +403,7 @@ def normalize_rating(raw: str) -> Optional[float]:
     return None
 
 # ----------------------------
-# LLM extraction (function)
+# LLM extraction
 # ----------------------------
 def _clean_json_response(text: str) -> Dict:
     text = text.strip()
@@ -292,23 +467,13 @@ JSON OUTPUT:
   "link": "{url}"
 }}"""
 
-    # try:
-    #     response = ollama.chat(model=config["LLM_MODEL"], messages=[{"role": "user", "content": prompt}])
-    #     raw_output = response["message"]["content"]
-    #     data = _clean_json_response(raw_output)
-    # except Exception as e:
-    #     logger.warning("LLM call failed: %s", e)
-    #     data = {}
-
     try:
         response = groq_model.invoke(prompt)
         raw_output = response.content
         data = _clean_json_response(raw_output)
-
     except Exception as e:
         logger.warning("Groq LLM call failed: %s", e)
         data = {}
-
 
     title = (data.get("title") or "").strip()
     raw_price = (data.get("price") or "").strip()
@@ -478,7 +643,7 @@ def load_products_from_json(filename: str = "products.json") -> List[Dict]:
         return []
 
 # ----------------------------
-# Pipeline functions (public)
+# Pipeline functions
 # ----------------------------
 def process_url(config, url: str, show_summary: bool = True) -> Optional[Dict]:
     print(f"\n🔍 Processing: {url}")
@@ -546,6 +711,7 @@ def compare_two(config, url1: str, url2: str) -> Optional[str]:
     return None
 
 def cleanup():
+    """Cleanup all resources"""
     global _session
     if _session:
         try:
@@ -553,9 +719,12 @@ def cleanup():
         except Exception:
             pass
     _session = None
+    
+    # Close Selenium driver
+    close_selenium_driver()
 
 # ----------------------------
-# Simple CLI usage
+# CLI usage
 # ----------------------------
 def main():
     cfg = create_config()
